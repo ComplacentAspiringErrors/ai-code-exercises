@@ -14,7 +14,7 @@ import java.util.stream.Collectors;
 public class TaskManagerCli {
     private static final TaskManager taskManager = new TaskManager("tasks.json");
 
-    public static void main(String[] args) {
+    public static void main(Stringyour interpretation of what the system represents[] args) {
         Options options = new Options();
         CommandLineParser parser = new DefaultParser();
         HelpFormatter formatter = new HelpFormatter();

@@ -128,3 +128,21 @@ Phase 4: The Trigger (The "UI")
 In TaskManagerCli.java, add the export command.
 
 Connect it so that when a user types export my_tasks.csv, it calls the Manager, which calls the Parser, which tells the Storage to save.
+
+## Exercise Part 3: Understanding Domain Model
+Definition of domain relating to the exercise, Think of a Domain as the "Universe" or the "Subject Matter" that your software lives in. If you are building a banking app, the domain is Finance. If you are building a Task Manager, your domain is Productivity and Time Management.
+A Domain Model is simply how we represent that real-world subject inside our code using objects and rules.
+
+
+## Exercise Part 4: Reflection and Presentation
+The application follows a modern Full-Stack JavaScript architecture, built for responsiveness and data integrity. It utilizes a Model-View-Controller (MVC) influenced structure to keep concerns separated:
+
+Frontend: A React-based Single Page Application (SPA) that handles the UI and state management.
+
+Backend: A Node.js and Express server that manages the RESTful API endpoints.
+
+Database: A PostgreSQL relational database, ensuring that tasks and user data remain structured and persistent.
+
+Communication: JSON is the primary data exchange format between the client and the server.
+
+These prompts helped shift the mental model from "step-by-step execution" to "event-driven execution," which eventually made handling API calls second nature.
