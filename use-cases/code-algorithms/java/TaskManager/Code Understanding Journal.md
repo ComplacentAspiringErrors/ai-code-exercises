@@ -146,3 +146,6 @@ Database: A PostgreSQL relational database, ensuring that tasks and user data re
 Communication: JSON is the primary data exchange format between the client and the server.
 
 These prompts helped shift the mental model from "step-by-step execution" to "event-driven execution," which eventually made handling API calls second nature.
+
+## Exercise: Algorithm Deconstruction Challenge
+
