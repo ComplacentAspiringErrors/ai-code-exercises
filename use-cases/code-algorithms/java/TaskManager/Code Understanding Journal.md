@@ -1595,4 +1595,763 @@ public void calculateTaskScore_DueToday_AddsTwentyPoints() {
 
 ## Part 3: Test-Driven Development Practice
 *** Exercise 3.1: TDD for a New Feature ***
+The First Test Case:
+We create a task where the assignedUser matches the currentUserId. If the base score is 10 (Low Priority), we expect the final result to be 22 ($10 + 12$).  Java@Test
+@DisplayName("Should add 12 points when task is assigned to the current user")
+public void calculateTaskScore_AssignedToCurrentUser_AddsTwelvePoints() {
+    // 1. Arrange
+    Task task = new Task();
+    task.setPriority(TaskPriority.LOW); // Base: 10
+    task.setAssignedUserId("user-123");
+    String currentUserId = "user-123";
+    
+    // Ensure no other boosts apply
+    task.setUpdatedAt(LocalDateTime.now().minusDays(10));
+    task.setDueDate(null);
+
+    // 2. Act
+    int score = TaskPriorityManager.calculateTaskScore(task, currentUserId);
+
+    // 3. Assert
+    assertEquals(22, score, "Score should be 22 (10 base + 12 boost)");
+}
+
+2. The Green Phase: Minimal Implementation
+
+To make this pass with the minimal amount of code, we need to do two things:
+
+    Update the Task class to hold an assignedUserId.  
+
+    Update the calculateTaskScore signature and add the logic.  
+
+The Minimal Code Change:
+Java
+
+public static int calculateTaskScore(Task task, String currentUserId) {
+    // ... (existing base score logic) ...
+
+    // ADDED LOGIC:
+    if (currentUserId != null && currentUserId.equals(task.getAssignedUserId())) {
+        score += 12;
+    }
+
+    // ... (rest of existing logic) ...
+    return score;
+}
+
+*** Exercise 3.2: TDD for Bug Fix ***
+First, we create a test that expects the score to increase by 12 when the task is assigned to the current user. This test will fail to compile initially because the method signature hasn't changed yet.  Java@Test
+@DisplayName("Should add 12 points when task is assigned to the current user")
+public void calculateTaskScore_AssignedToCurrentUser_AddsTwelvePoints() {
+    // Arrange
+    Task task = new Task();
+    task.setPriority(TaskPriority.LOW); // Base score: 10
+    task.setAssignedUserId("user-123");
+    String currentUserId = "user-123";
+    
+    // Control variables: avoid other boosts
+    task.setUpdatedAt(LocalDateTime.now().minusDays(10));
+    task.setDueDate(null);
+
+    // Act
+    int score = TaskPriorityManager.calculateTaskScore(task, currentUserId);
+
+    // Assert
+    // Logic: 10 (Base) + 12 (Assigned Boost) = 22
+    assertEquals(22, score, "Score should reflect the +12 boost for the assigned user.");
+}
+2. The Green Phase: Minimal ImplementationTo make the test pass, you need to update the Task class and the calculateTaskScore method.  A. Update the Task ClassAdd the assignedUserId field to your model.  Javapublic class Task {
+    private String assignedUserId;
+
+    public String getAssignedUserId() {
+        return assignedUserId;
+    }
+
+    public void setAssignedUserId(String assignedUserId) {
+        this.assignedUserId = assignedUserId;
+    }
+    // ... rest of your task code
+}
+B. Update the Scoring LogicInject the currentUserId into the method and apply the check.  Javapublic static int calculateTaskScore(Task task, String currentUserId) {
+    // 1. Base priority weights
+    Map<TaskPriority, Integer> priorityWeights = Map.of(
+        TaskPriority.LOW, 1,
+        TaskPriority.MEDIUM, 2,
+        TaskPriority.HIGH, 3,
+        TaskPriority.URGENT, 4
+    );
+
+    int score = priorityWeights.getOrDefault(task.getPriority(), 0) * 10;
+
+    // 2. NEW FEATURE: Assigned User Boost
+    if (currentUserId != null && currentUserId.equals(task.getAssignedUserId())) {
+        score += 12;
+    }
+
+    // 3. Due date factor
+    if (task.getDueDate() != null) {
+        long daysUntilDue = ChronoUnit.DAYS.between(LocalDateTime.now(), task.getDueDate());
+        if (daysUntilDue < 0) score += 30;
+        else if (daysUntilDue == 0) score += 20;
+        else if (daysUntilDue <= 2) score += 15;
+        else if (daysUntilDue <= 7) score += 10;
+    }
+
+    // 4. Status penalties
+    if (task.getStatus() == TaskStatus.DONE) score -= 50;
+    else if (task.getStatus() == TaskStatus.REVIEW) score -= 15;
+
+    // 5. Tag and Update boosts[cite: 1]
+    if (task.getTags().stream().anyMatch(tag -> List.of("blocker", "critical", "urgent").contains(tag))) {
+        score += 8;
+    }
+
+    if (ChronoUnit.DAYS.between(task.getUpdatedAt(), LocalDateTime.now()) < 1) {
+        score += 5;
+    }
+
+    return score;
+}
+3. The Refactor PhaseNow that it's working, we ensure the code is clean[cite: 1].Backward Compatibility: If you have other parts of your code that only send a Task without a user ID, you can create an "overloaded" method[cite: 1]:Javapublic static int calculateTaskScore(Task task) {
+    return calculateTaskScore(task, null); // Call the new version with null[cite: 1]
+}
+Null Safety: The .equals() check is safe because we check currentUserId != null first, preventing a NullPointerException[cite: 1].
+
+
+## Part 4: Integration Testing
+*** Exercise 4.1: Testing the Full Workflow *** 
+Scenario Verification: What stories are we telling? An integration test should verify that a High Priority task that is Done correctly ranks lower than a Medium Priority task that is Overdue.  
+
+    Test Data Design: To exercise the entire workflow, you need a "mixed bag" of tasks. You need at least one task that triggers every major branch: an overdue task, a completed task, and a task with a critical tag.  
+
+    Assertions: You shouldn't just check if the list isn't empty. You should verify the order of the results. Does index [0] actually have a higher score than index [1]?  
+
+    Structure: How do you keep it readable? Use the AAA (Arrange, Act, Assert) pattern so your teammates can easily follow the logic.  
+
+🚀 The Integration Test Implementation
+
+This test uses JUnit 5 to verify that calculateTaskScore, sortTasksByImportance, and getTopPriorityTasks work as a unified system.  
+Java
+
+@Test
+@DisplayName("Integration: Workflow should correctly score, sort, and filter a mix of tasks")
+public void taskPriorityWorkflow_FullIntegrationTest() {
+    // 1. ARRANGE: Create a diverse set of tasks
+    // Task A: Urgent but DONE (Should be penalized)
+    Task taskA = new Task("Update API", TaskPriority.URGENT, TaskStatus.DONE);
+    taskA.setUpdatedAt(LocalDateTime.now().minusDays(5));
+
+    // Task B: Medium and OVERDUE (Should be high priority)
+    Task taskB = new Task("Fix Login Bug", TaskPriority.MEDIUM, TaskStatus.TODO);
+    taskB.setDueDate(LocalDateTime.now().minusDays(1)); // Overdue
+    taskB.setUpdatedAt(LocalDateTime.now().minusDays(2));
+
+    // Task C: Low with CRITICAL tag (Should be boosted)
+    Task taskC = new Task("Deploy Server", TaskPriority.LOW, TaskStatus.TODO);
+    taskC.setTags(List.of("critical")); // +8 Boost
+    taskC.setUpdatedAt(LocalDateTime.now().minusDays(10));
+
+    List<Task> rawTasks = List.of(taskA, taskB, taskC);
+    String currentUserId = "dev-01"; // For the assigned user feature
+
+    // 2. ACT: Execute the full workflow
+    // Step 1 & 2: Score and Sort
+    List<Task> sortedTasks = TaskPriorityManager.sortTasksByImportance(rawTasks, currentUserId);
+    
+    // Step 3: Get top 2 tasks
+    List<Task> topTasks = TaskPriorityManager.getTopPriorityTasks(sortedTasks, 2);
+
+    // 3. ASSERT: Verify the outcome of the combined logic
+    // Expected Scores:
+    // Task B (Medium Overdue): (2*10) + 30 = 50
+    // Task C (Low Critical): (1*10) + 8 = 18[cite: 1]
+    // Task A (Urgent Done): (4*10) - 50 = -10[cite: 1]
+
+    assertEquals(2, topTasks.size(), "Should return exactly 2 top tasks.");
+    assertEquals("Fix Login Bug", topTasks.get(0).getTitle(), "Overdue task should be #1.");
+    assertEquals("Deploy Server", topTasks.get(1).getTitle(), "Critical tagged task should be #2.");
+    
+    // Verify Task A was filtered out of the top 2
+    assertFalse(topTasks.contains(taskA), "Completed tasks should not appear in the top priority list.");
+}
+
+
+## Exercise: Understanding What to Change with AI
+ *** Exercise 1: Code Readability Improvement (Java) *** 
+ 1. Naming Conventions (Readability)
+
+In a professional backend environment, code should be self-documenting.
+
+    The Issue: a(String un, String pw, String em) and f(String un) are cryptic.
+
+    The Fix: Rename them to registerUser and findUserByUsername. Rename class U to User.
+
+2. SQL Injection (Critical Security Risk)
+
+The current implementation uses string concatenation for the SQL query: "INSERT INTO users VALUES ('" + un + "')".
+
+    The Danger: An attacker could input a username like ' OR 1=1; --, which could delete or leak your entire database.
+
+    The Fix: Always use Prepared Statements with placeholders (?) to sanitize inputs.
+
+3. Password Security
+
+The code stores pw as a raw string.
+
+    The Danger: If your database is compromised, every user's password is leaked in plain text.
+
+    The Fix: Never store plain text passwords. Use a hashing algorithm like BCrypt or Argon2.
+
+4. Encapsulation & Separation of Concerns
+
+The UserMgr class is doing too much—it's validating data, managing an in-memory list, and talking to the database.
+
+    The Fix: Move the database logic into a Data Access Object (DAO) or Repository class.
+
+public class UserManager {
+    private List<User> userCache;
+    private DatabaseConnection database;
+
+    public UserManager(DatabaseConnection db) {
+        this.database = db;
+        this.userCache = new ArrayList<>();
+    }
+
+    /**
+     * Registers a new user after validation and password hashing.
+     */
+    public boolean registerUser(String username, String plainPassword, String email) {
+        // 1. Validation Logic
+        if (isInvalidInput(username, plainPassword, email)) {
+            return false;
+        }
+
+        // 2. Check for duplicates (In-memory or DB)
+        if (findUserByUsername(username) != null) {
+            return false;
+        }
+
+        // 3. Security: Hash the password (Example using a placeholder)
+        String hashedPassword = PasswordHasher.hash(plainPassword); 
+
+        User newUser = new User(username, hashedPassword, email);
+        userCache.add(newUser);
+
+        // 4. Secure SQL: Prepared Statement
+        String sql = "INSERT INTO users (username, password, email) VALUES (?, ?, ?)";
+        return database.executeSecure(sql, username, hashedPassword, email);
+    }
+
+    public User findUserByUsername(String username) {
+        return userCache.stream()
+                .filter(u -> u.getUsername().equals(username))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private boolean isInvalidInput(String un, String pw, String em) {
+        return un.length() < 3 || pw.length() < 8 || !em.contains("@");
+    }
+}
+
+
+*** Exercise 2: Function Refactoring (Python) ***
+1. Functional BreakdownTo make this function professional and robust, we should separate concerns into smaller, focused units:  Validation Logic: A separate function to check inventory levels and customer existence.  Pricing Engine: A dedicated function to handle base prices and discounts.  Logistics Module: A function specifically for calculating shipping based on location and price.  State Management: A function that handles the side effect of updating inventory counts.  2. Refactored ImplementationBy breaking this down, we move toward Clean Architecture. This version is easier to read and allows you to test the pricing logic without actually processing a full order.  Pythondef validate_order(order, inventory, customer_data):
+    """Checks if the order is valid for processing."""
+    item_id = order['item_id']
+    customer_id = order['customer_id']
+
+    if item_id not in inventory:
+        return False, 'Item not in inventory'
+    if inventory[item_id]['quantity'] < order['quantity']:
+        return False, 'Insufficient quantity'
+    if customer_id not in customer_data:
+        return False, 'Customer not found'
+    return True, None
+
+def calculate_base_price(item_id, quantity, inventory, is_premium):
+    """Handles pricing and discount logic."""
+    price = inventory[item_id]['price'] * quantity
+    if is_premium:
+        price *= 0.9  # 10% Premium discount
+    return price
+
+def calculate_shipping(price, location):
+    """Handles shipping costs based on region."""
+    if location == 'domestic':
+        return 5.99 if price < 50 else 0
+    return 15.99
+
+def process_orders(orders, inventory, customer_data):
+    results = []
+    error_orders = []
+    total_revenue = 0
+
+    for order in orders:
+        is_valid, error_msg = validate_order(order, inventory, customer_data)
+        
+        if not is_valid:
+            error_orders.append({'order_id': order['order_id'], 'error': error_msg})
+            continue
+
+        # Data retrieval for calculations
+        customer = customer_data[order['customer_id']]
+        
+        # Logic orchestration
+        price = calculate_base_price(order['item_id'], order['quantity'], inventory, customer['premium'])
+        shipping = calculate_shipping(price, customer['location'])
+        tax = price * 0.08
+        final_price = price + shipping + tax
+
+        # Update system state
+        inventory[order['item_id']]['quantity'] -= order['quantity']
+        total_revenue += final_price
+
+        results.append({
+            'order_id': order['order_id'],
+            'final_price': round(final_price, 2),
+            # ... other details
+        })
+
+    return {
+        'processed_orders': results,
+        'error_orders': error_orders,
+        'total_revenue': round(total_revenue, 2)
+    }
+
+
+
+*** Exercise 3: Code Duplication Detection (JavaScript) ***
+The code repeats the same two logical operations across three different data fields (age, income, and score):
+
+    The Accumulator Pattern: Initializing a total variable and looping through the array to sum values to calculate an average.
+
+    The Extremum Pattern: Initializing a highest variable and looping to find the maximum value.
+
+Currently, you are running six separate loops. This is inefficient for both the developer (more lines to maintain) and the machine (multiple passes over the same data).
+🚀 Consolidated Approaches
+Approach A: The Unified Loop (Best for Performance)
+
+We can reduce the overhead by processing all statistics in a single pass through the data.
+JavaScript
+
+function calculateUserStatistics(userData) {
+  if (!userData.length) return null;
+
+  const stats = {
+    age: { total: 0, highest: userData[0].age },
+    income: { total: 0, highest: userData[0].income },
+    score: { total: 0, highest: userData[0].score }
+  };
+
+  userData.forEach(user => {
+    ['age', 'income', 'score'].forEach(key => {
+      stats[key].total += user[key];
+      if (user[key] > stats[key].highest) {
+        stats[key].highest = user[key];
+      }
+    });
+  });
+
+  const count = userData.length;
+  return {
+    age: { average: stats.age.total / count, highest: stats.age.highest },
+    income: { average: stats.income.total / count, highest: stats.income.highest },
+    score: { average: stats.score.total / count, highest: stats.score.highest }
+  };
+}
+
+Approach B: The Helper Function (Best for Readability)
+
+By creating a generic getStats function, we encapsulate the logic and make it reusable for any numeric field.
+JavaScript
+
+const getFieldStats = (data, field) => {
+  const values = data.map(user => user[field]);
+  const average = values.reduce((sum, val) => sum + val, 0) / data.length;
+  const highest = Math.max(...values);
+  return { average, highest };
+};
+
+function calculateUserStatistics(userData) {
+  if (!userData.length) return null;
+
+  return {
+    age: getFieldStats(userData, 'age'),
+    income: getFieldStats(userData, 'income'),
+    score: getFieldStats(userData, 'score')
+  };
+}
+
+⚖️ Evaluation for Junior Developers
+
+In a professional backend environment or a student cohort, Approach B (Helper Function) is often the winner for readability.
+
+    Clarity: A junior developer can immediately see that getFieldStats does one job well. If there is a bug in the "average" logic, they only have to fix it in one place.
+
+    Abstraction: It hides the complexity of the loops, allowing the main function to read like a high-level summary.
+
+    Scalability: If you need to add "weight" or "height" statistics later, you simply add one line of code.
+
+## Exercise: Function Decomposition Challenge
+. Improvements in Readability and Maintainability
+
+By extracting logic into smaller, focused methods, the code moves from "How" something is done to "What" is being done.
+
+    Self-Documenting Code: Instead of reading a 20-line if-else block for address validation, a developer now sees validateAddress(addressData). The method name provides the context, making the main execution flow readable at a glance.
+
+    Reduced Cognitive Load: You no longer need to keep the state of 15 different variables (like totalErrors, existingEmails, and recordErrors) in your head while trying to understand how a phone number is formatted.
+
+    Isolated Debugging: If there is a bug in how names are capitalized, you go straight to capitalizeWords. You don't have to risk breaking the database saving logic just to fix a string formatter.
+
+    Simplified Testing: You can now write Unit Tests for isValidEmail or parseDate in isolation without needing to mock the entire CustomerRepository or provide a full CustomerProcessingOptions object.
+
+2. The Most Challenging Part of Decomposition
+
+The hardest part of refactoring a function this size is State Management and Data Flow.
+
+In the original code, the isValid flag and the recordErrors list are tightly coupled to the loop's local scope. When you extract "Process Address" or "Validate Email" into their own functions, you face a dilemma: How do you return both the transformed data AND the error status?
+
+Common "Gotchas" during this process:
+
+    The Argument Explosion: Realizing that the new validateDeduplication method needs options, validRecords, existingEmails, and the current email string—resulting in methods with too many parameters.
+
+    Shared Mutable State: Deciding whether the extracted methods should modify the processedRecord map directly (side effects) or return a new, clean object (immutability).
+
+3. The Most Reusable Extracted Function
+
+While many functions are specific to "Customers," the capitalizeWords method is the clear winner for reusability.
+Why?
+
+    Domain Agnostic: It doesn't care about customers, databases, or APIs. It is a pure utility function that transforms a string.
+
+    Zero Dependencies: It doesn't rely on any class-level variables or external repositories.
+
+    Universal Use Case: Almost every application that handles user input (names, city names, titles) needs a way to normalize casing.
+
+Runner-up: normalizePhoneNumber. While slightly more specific, any system dealing with contact info would benefit from a standardized way to strip formatting before storage or comparison.
+Refactoring Suggestion: The "Validation Result" Pattern
+
+To solve the "Challenging Part" mentioned above, consider creating a small ValidationResult class. Instead of passing maps and booleans around, your extracted functions can return an object that contains the transformedData and a List<String> errors.
+
+This keeps your main processCustomerData loop incredibly clean:
+Java
+
+ValidationResult addressResult = processAddress(record.get("address"));
+if (addressResult.isInvalid()) {
+    recordErrors.addAll(addressResult.getErrors());
+    isValid = false;
+}
+
+## Exercise: Code Readability Challenge
+The original sample code is a classic implementation of Selection Sort. While functional, it treats the algorithm as a set of math instructions rather than a readable process. Here is how the refactored version changes the game.
+Impact of Readability Improvements
+
+    How much easier is it to understand?
+    The code is significantly easier to digest because it moves from imperative logic (how to swap bits in memory) to declarative logic (what the algorithm is doing). By extracting the "swap" and "find minimum" logic into helper methods, the main loop becomes a high-level summary of the algorithm.
+
+    Readability issues the AI caught vs. what you might notice:
+
+        The AI caught: The "Magic Index" problem. In the original, min_idx is updated deep inside a nested loop. An AI identifies this as a "cognitive load" issue and suggests extracting findMinimumIndex.
+
+        What you might notice (Human Perspective): The lack of intent. The original code doesn't tell you why we are swapping. A human dev might notice that the variable temp is a "leak" of low-level implementation details that distracts from the sorting logic.
+
+    The Biggest Impact:
+    Method Extraction has the most weight here. Breaking a nested loop into named functions like findSmallestElementIndex and swapElements removes the "Pyramid of Doom" (excessive indentation) and allows the reader to skip details they already understand.
+
+The Power of Naming
+
+Improved names like currentUnsortedIndex instead of i or searchIndex instead of j change the understanding completely:
+
+    Context: You no longer see just a "counter"; you see a boundary between the sorted and unsorted parts of the array.
+
+    Purpose: temp says "I am a placeholder." elementToSwap says "I am part of the sorting logic."
+
+Patterns for Future Code
+
+To write cleaner backend code, apply these patterns:
+
+    Extract Till You Drop: If a function has a nested loop, the inner loop almost always belongs in its own method.
+
+    Symmetry: Keep methods at the same level of abstraction. A high-level sort method shouldn't contain low-level temp = a; a = b logic.
+
+    Explaining Variables: Use variables to hold the result of a complex comparison or calculation before using it in an if statement.
+
+Explaining to the Team (The "Clinic" Briefing)
+
+Since you've been working with Ashly, Lukholo, Jay, and Koketso on your campus projects, here is how you would pitch these changes to them during a session in George:
+
+    "Hey guys, look at our sortItems function. Right now, it's a bit of a mess of i and j variables that's hard to follow during a code review.
+
+    Lukholo, I’ve pulled the swapping logic into its own swap method. It makes the main loop much cleaner. Jay, I renamed the indices to leftBoundary and minElementIndex so we don't get lost in the nested loops.
+
+    Koketso, Ashly, the goal here is that when we come back to this in two months for the Toy Robot project, we don't have to spend ten minutes 'hand-tracing' the logic. It should read like a story: 'Find the smallest item, then swap it with the current position.' Simple as that."
+
+Refactored Version for Comparison
+Java
+
+public static void selectionSort(int[] numbers) {
+    for (int currentIdx = 0; currentIdx < numbers.length - 1; currentIdx++) {
+        int smallestIdx = findSmallestElementIndex(numbers, currentIdx);
+        swap(numbers, currentIdx, smallestIdx);
+    }
+}
+
+private static int findSmallestElementIndex(int[] array, int startAt) {
+    int minIdx = startAt;
+    for (int i = startAt + 1; i < array.length; i++) {
+        if (array[i] < array[minIdx]) {
+            minIdx = i;
+        }
+    }
+    return minIdx;
+}
+
+private static void swap(int[] array, int firstIdx, int secondIdx) {
+    int temp = array[firstIdx];
+    array[firstIdx] = array[secondIdx];
+    array[secondIdx] = temp;
+}
+
+## Exercise: Design Pattern Implementation Challenge
+1. Pattern Analysis & Strategy
+
+The core issue is conditional logic explosion. The shippingMethod determines the algorithm used. By using the Strategy pattern, we encapsulate each shipping algorithm into its own class.
+// Strategy Interface (Implicit in JS, but could be an abstract class in Java)
+class ShippingStrategy {
+  calculate(packageDetails, destination) {
+    throw new Error("Strategy method 'calculate' must be implemented");
+  }
+}
+
+// Concrete Strategy: Standard
+class StandardShipping extends ShippingStrategy {
+  calculate({ weight, length, width, height }, destination) {
+    const rates = { 'USA': 2.5, 'Canada': 3.5, 'Mexico': 4.0 };
+    let cost = weight * (rates[destination] || 4.5);
+
+    if (weight < 2 && (length * width * height) > 1000) {
+      cost += 5.0;
+    }
+    return cost;
+  }
+}
+
+// Concrete Strategy: Express
+class ExpressShipping extends ShippingStrategy {
+  calculate({ weight, length, width, height }, destination) {
+    const rates = { 'USA': 4.5, 'Canada': 5.5, 'Mexico': 6.0 };
+    let cost = weight * (rates[destination] || 7.5);
+
+    if ((length * width * height) > 5000) {
+      cost += 15.0;
+    }
+    return cost;
+  }
+}
+
+// Concrete Strategy: Overnight
+class OvernightShipping extends ShippingStrategy {
+  calculate({ weight }, destination) {
+    const rates = { 'USA': 9.5, 'Canada': 12.5 };
+    if (!rates[destination]) {
+      return "Overnight shipping not available for this destination";
+    }
+    return weight * rates[destination];
+  }
+}
+
+// The Context
+class ShippingCalculator {
+  constructor() {
+    this.strategies = {
+      'standard': new StandardShipping(),
+      'express': new ExpressShipping(),
+      'overnight': new OvernightShipping()
+    };
+  }
+
+  calculate(packageDetails, destination, method) {
+    const strategy = this.strategies[method];
+    if (!strategy) return "Invalid shipping method";
+    
+    const result = strategy.calculate(packageDetails, destination);
+    return typeof result === 'number' ? result.toFixed(2) : result;
+  }
+}
+
+3. Verification Tests
+
+These tests ensure the refactored code produces the exact same results as the original "spaghetti" version.
+JavaScript
+
+const calculator = new ShippingCalculator();
+const testPkg = { weight: 5, length: 10, width: 10, height: 10 };
+
+function runTests() {
+  const results = [
+    { desc: "Standard USA", expected: "12.50", actual: calculator.calculate(testPkg, 'USA', 'standard') },
+    { desc: "Express Canada", expected: "27.50", actual: calculator.calculate(testPkg, 'Canada', 'express') },
+    { desc: "Overnight Mexico (Invalid)", expected: "Overnight shipping not available for this destination", 
+      actual: calculator.calculate(testPkg, 'Mexico', 'overnight') },
+    { desc: "Standard Dim Surcharge", expected: "7.50", 
+      actual: calculator.calculate({weight: 1, length: 20, width: 10, height: 10}, 'USA', 'standard') }
+  ];
+
+  results.forEach(t => {
+    console.log(`[${t.actual === t.expected ? 'PASS' : 'FAIL'}] ${t.desc}: Expected ${t.expected}, got ${t.actual}`);
+  });
+}
+
+runTests();
+
+4. Benefits Gained
+
+    Scalability: If you want to add "Drone Delivery," you simply create a DroneShipping class. You don't touch the ShippingCalculator or the other shipping classes.
+
+    Testability: You can now write unit tests for OvernightShipping specifically without worrying about the complexity of Standard rules.
+
+    Reduced Complexity: The calculate method in the Context class went from ~50 lines of nested if/else to a 3-line lookup.
+
+    Clean Architecture: This mimics the "Back-end Developer" mindset you're training for—moving logic into specific services or handlers rather than letting it bloat a single controller.
+    Context: The ShippingCalculator.
+
+    Strategy Interface: A common interface (or abstract class) that defines a calculate(package, destination) method.
+
+    Concrete Strategies: StandardShipping, ExpressShipping, and OvernightShipping.
+
+
+## Exercise: Applying AI to deepen programming language understanding
+public static void sortItems(int[] array) {
+    int n = array.length;
+    for (int i = 0; i < n - 1; i++) {
+        int min_idx = i;
+        for (int j = i + 1; j < n; j++) {
+            if (array[j] < array[min_idx]) {
+                min_idx = j;
+            }
+        }
+        int temp = array[min_idx];
+        array[min_idx] = array[i];
+        array[i] = temp;
+    }
+}
+
+1. Suggestions for Idiomatic Java
+
+    Use camelCase for variables: In Java, min_idx is considered "un-idiomatic." Use minIndex instead.
+
+    Leverage the final keyword: If a variable like n (length) isn't changing, mark it final to signal intent.
+
+    In-place naming: Instead of n, use array.length directly or a descriptive name like unsortedBoundary.
+
+    Standard Library Awareness: While this is a sorting exercise, idiomatic Java often favors Arrays.sort() for production code.
+
+2. Why these changes follow Best Practices
+
+    Readability (The "Clean Code" Rule): Java is verbose by design. Using minIndex over min_idx aligns with the standard library's naming conventions, making your code "look" like official Java.
+
+    Separation of Concerns: Idiomatic Java often extracts the "swap" logic into a helper method. This follows the Single Responsibility Principle—a method should do one thing.
+
+3. Language Features to Advantage
+
+    Enhanced For-Loops (where applicable): While not ideal for selection sort (since we need indices), knowing when to use for (int num : array) is a core Java skill.
+
+    Methods as Building Blocks: Java is heavily Object-Oriented. Even in static utility methods, extracting logic into private static helpers is the professional standard.
+
+
+## Exercise: Understanding FastAPI Code Patterns
+
+Part 1: Analyzing the Design Patterns
+The Repository Pattern & Generic[T]
+
+The Repository Pattern acts as a mediator between your business logic and the database.
+
+    Why use it? It keeps your database queries in one place. If you ever switch from SQLAlchemy to another library, you only change the Repository, not your entire service layer.
+
+    Purpose of Generic[T]: The T is a placeholder. Instead of writing a "list" or "get" function for every single table (Users, Products, Orders), you write it once in the Repository class.
+
+    Maintainability: It enforces consistency. Every model in your system will automatically have list() and get_by_id() functionality without you writing redundant code.
+
+Dependency Injection (DI)
+
+FastAPI uses Depends() to manage DI. It works in layers:
+
+    Level 1 (Infrastructure): get_db handles the database connection lifecycle.
+
+    Level 2 (Security): get_current_user depends on get_db and the oauth2_scheme.
+
+    Level 3 (Authorization): requires_role depends on get_current_user.
+
+    Benefit: You don't "hardcode" a database connection inside your functions. This makes testing easy because you can "inject" a fake database during tests.
+
+Part 2: Tracing Execution Flow (/admin/users/)
+
+When a request hits the admin endpoint, it follows this sequence:
+
+    Middleware: TimingMiddleware starts a timer.
+
+    Authentication: get_current_user runs. It decodes the JWT. If the token is fake or expired, it throws a 401 Unauthorized.
+
+    Database Lookup: get_current_user calls UserRepository to find the user in the DB.
+
+    Authorization: The @requires_role("admin") decorator checks if is_superuser is true. If not, it throws a 403 Forbidden.
+
+    Route Logic: The list_users function finally executes.
+
+    Data Fetching: The UserRepository queries the database for the list of users.
+
+    Response: The data is converted into UserSchema (Pydantic), the timer in the middleware stops, and the result is sent to the client.
+
+Part 3: Simplifying Advanced Concepts
+
+    lifespan: Think of this as the "Power On" and "Power Off" switch for your app. You use it to connect to the database when the server starts and disconnect when it stops.
+
+    TimingMiddleware: It’s a "wrapper" around your whole app. It stands at the door, notes the time someone enters (request), and notes the time they leave (response) to calculate how fast the server is.
+
+    JWT Flow:
+
+        User gives username/password.
+
+        Server gives back a "Digital ID Card" (The JWT).
+
+        User shows this card for every future request.
+
+        The server just checks the "stamp" (signature) on the card to see if it's real, rather than checking the password every single time.
+
+Part 4: Implementation Challenge (Logging System)
+
+To implement a logging system using these patterns, you would follow these three steps:
+1. Create the Model and Repository
+
+First, define what an "Audit Log" looks like and create a generic repository for it.
+Python
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    id: int
+    user_id: int
+    action: str  # e.g., "login", "view_admin_users"
+    timestamp: datetime
+
+class AuditRepository(Repository[AuditLog]):
+    # Inherits list() and get_by_id() from Repository
+    async def create_log(self, db: AsyncSession, user_id: int, action: str):
+        log = AuditLog(user_id=user_id, action=action, timestamp=datetime.utcnow())
+        db.add(log)
+        await db.commit()
+
+2. Extend the Service Layer
+
+Add the logging logic to the UserService.
+Python
+
+async def authenticate_user(self, db: AsyncSession, username: str, password: str) -> Optional[User]:
+    user = await self.repository.get_by_username(db, username)
+    if user and self.verify_password(password, user.hashed_password):
+        # Add a log entry here
+        audit_repo = AuditRepository(AuditLog)
+        await audit_repo.create_log(db, user.id, "successful_login")
+        return user
+    return None
 
